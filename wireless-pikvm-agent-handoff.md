@@ -76,7 +76,11 @@ Suggested order (cheapest first; stop at the first that works reliably):
 1. **Microsoft Wireless Display on the dev laptop**: free baseline. Needs the optional
    feature present and the dev laptop's adapter to support it; the work laptop must see it.
 2. **LazyCast on the spare Pi 5** (or Pi 4) with the OS version the README recommends,
-   onboard radio for Miracast, USB-serial console for access.
+   onboard radio for Miracast, USB-serial console for access. The Pi is only the
+   hardware already on hand: **any Linux machine with a P2P-capable radio is equally
+   valid** (e.g. an x86 mini PC or old laptop with an Intel AX200/AX210, whose `iwlwifi`
+   driver is generally believed to support P2P; verify with `iw list`). If the Pi's
+   onboard radio fails, switching host hardware is a legitimate fix, not a detour.
 3. **MiracleCast** on the Pi with `iw list`, `test-hardware-capabilities.sh`,
    NetworkManager stopped, `--log-level trace`, and `p2p_no_group_iface=1` if group
    formation fails.
