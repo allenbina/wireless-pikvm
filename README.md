@@ -36,3 +36,11 @@ or natively: `PYTHONPATH=host python -m pytest -q tests`
   nice!nano drive (double-tap reset). No USB passthrough needed.
 - Start with USB serial as the control link, then add a BLE GATT command
   channel (dongle holds two connections: HID to target, commands from controller).
+
+## Security assumptions (deliberate, revisit later)
+
+- The Wi-Fi network is assumed trusted. No authentication or encryption on the
+  controller link or browser UI yet; add it before this leaves a private LAN.
+- Don't expose any service from this project to the internet.
+- The BLE link to the target is bonded (standard pairing); the controller-to-dongle
+  command channel is unauthenticated for now.
