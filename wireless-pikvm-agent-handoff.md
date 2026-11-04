@@ -1,97 +1,111 @@
-# Wireless PiKVM experiment — agent handoff
+# Wireless PiKVM experiment — agent handoff (rev 2)
+
+Supersedes rev 1. Changes: software-only architecture (the HDMI/capture fallback is
+**removed by the user's choice, do not propose it**), receiver candidates compared,
+first milestone narrowed to receiver reliability.
 
 ## Mission
 
-Investigate and build a proof of concept for controlling a Windows laptop wirelessly from a Linux receiver, then remotely from a browser. Use the laptop’s built-in wireless projection for video and Bluetooth HID or Miracast input forwarding for keyboard/mouse. Prefer existing projects and minimal custom glue.
+Control a work laptop (Windows, native Win+K Cast) with no cable to it. Video: native
+Miracast to a self-hosted software receiver, then viewed in a browser. Input: BLE HID
+dongle (see `docs/PROTOCOL.md`). No HDMI, capture device or physical monitor anywhere.
 
-Start with hardware discovery and a working local display receiver. Do not build the web interface before proving that the laptop can cast reliably to Linux.
+The user's core concern: **Miracast receivers are poorly supported.** Answer that with
+concrete evidence (working setups, or exact failure reasons), not by routing around it.
 
-## User context and scope
+## Intended architecture
 
-- The user has already built a PiKVM and is comfortable with hardware and Linux projects.
-- They have Bluetooth dongles used for keyboard projects; models and capabilities are unknown.
-- Their work laptop discovers wireless displays at WeWork. Windows/Miracast is a working assumption, not yet confirmed.
-- Linux host model, distribution, Wi-Fi chipset, Bluetooth hardware, and existing PiKVM model are unknown.
-- Goal: no HDMI or USB cable between the target laptop and the receiver. The receiver can use wired power and Ethernet.
-- Begin with the OS already running and the user manually initiating casting and pairing. Unattended reconnection is a later investigation.
-- No implementation or hardware testing has been performed yet. Prior discussion established candidate components only.
+- A general-purpose computer (Linux, Windows, Pi, server) runs the Miracast receiver.
+  Platform is open; the goal is the most reliable self-hosted software receiver.
+- One dedicated Wi-Fi adapter does Miracast / Wi-Fi Direct.
+- A second interface (Ethernet, or another Wi-Fi adapter) serves the LAN and the webpage.
+  The user often has no Ethernet nearby, so a second USB Wi-Fi adapter plus a USB-serial
+  console are the likely bring-up tools.
+- Received video goes through software into a browser stream (possibly WebRTC).
+- Input uses the nRF52840 BLE HID dongle separately (firmware not started).
+- The user has accepted: no BIOS/pre-boot access; remote control of a logged-in session only.
+- Network is assumed trusted; no authentication yet (deliberate, revisit later).
 
-## Proposed architecture
+## Why this is hard (scope of "receiver reliability")
 
-Video: target laptop → Miracast/Wi-Fi Direct → Linux receiver → local display, then browser stream.
+Miracast is five stacked problems: (1) discovery via Wi-Fi management frames, (2) Wi-Fi
+Direct role negotiation, pairing, security and IP setup, (3) RTSP capability/session
+negotiation, (4) compressed video reception, timing, buffering and loss recovery,
+(5) reconnection plus optional extras such as input. Failures can sit in adapter
+firmware, driver, network management, protocol interop, or playback. A dedicated adapter
+removes radio-sharing problems but does not fix unsupported driver behavior. The source
+laptop may also share its own radio between normal Wi-Fi and Miracast.
 
-Input: browser/local input → Linux → Bluetooth keyboard/mouse emulation → target laptop.
+Narrowing rule: support **one known laptop + one receiver OS + one chosen Wi-Fi chipset**,
+not a universal receiver.
 
-Alternative input: use Miracast User Input Back Channel (UIBC) if it works reliably with this Windows source and Linux receiver.
+## Candidates and evidence status
 
-Use a dedicated Wi-Fi adapter for Miracast and Ethernet for management if possible. Avoid taking over the sole interface used for SSH. Miracast over Infrastructure (MS-MICE) is a separate capability; do not assume a Linux receiver supports it just because it supports ordinary Miracast.
+"Verified" below means seen in a source this session; everything else is from the user's
+earlier research and is unconfirmed by us. Nothing has been installed or tested on the
+user's hardware.
 
-## Existing components and primary references
+| Candidate | What is known | Status |
+|---|---|---|
+| MiracleCast (albfan) on Linux | Real sink + source implementation. Maintainer demoed Android reception on a Pi 3 with onboard Wi-Fi (2016, from user research). `miracle-sinkctl --uibc` gives basic input. README says some hardware is not Wi-Fi-Direct compatible; run `res/test-hardware-capabilities.sh`. Needs NetworkManager/other wpa_supplicant stopped. No MS-MICE support. Known failure signatures: `Failed to create interface p2p-dev-wlan0: -16`; group formation failing with FORMATION_FAILED, worked around by `p2p_no_group_iface=1` in a different adapter's report. Pi 5 negotiation-failure reports were in the user's research; **we could not find them ourselves**. | Unverified on Pi 5 |
+| LazyCast (homeworkc) on Linux | Pi 3/4 reception reports including Windows sources. Supports MS-MICE: README says tested with a Windows 10 PC and a Pi, both on Ethernet, manually assigned IPs. README recommends legacy 32-bit Raspberry Pi OS (Bullseye); Bookworm reportedly causes issues. Reports of pairing difficulty after Pi reboot (ARP/routing/power save; workaround: toggle source Wi-Fi). Issue #12: a user on Ethernet with static IP saw no Pi in Windows "connect", no resolution seen. | Partly verified (README/issues), not on our hardware |
+| Microsoft Wireless Display (Windows 11) | Officially supported PC-to-PC receiver, free baseline. Reliability, browser capture, and whether the optional feature is still shipped on current builds are untested. Probably no input back-channel. | Untested |
+| AirServer Windows Desktop | Supports Miracast, Windows 11; documents capture into OBS. Candidate pipeline AirServer -> OBS -> MediaMTX -> browser. Documented, not a verified deployment. Commercial, acceptable. | Untested |
+| Newer open-source projects | Advertise Miracast but mark receiver unfinished/untested. None clearly mature. | Rejected for now |
 
-1. MiracleCast receiver: https://github.com/albfan/miraclecast
-   - Implements the display sink role; requires Wi-Fi Direct hardware and uses GStreamer.
-   - Documented setup manages its own wpa_supplicant and asks to stop competing network services. Adapt carefully to the installed distribution rather than blindly stopping all networking.
-   - Implements basic keyboard and mouse events through optional UIBC, enabled with `miracle-sinkctl --uibc`. Interoperability must be tested.
-2. PiKVM Bluetooth HID: https://docs.pikvm.org/bluetooth_hid/
-   - PiKVM already has a Bluetooth keyboard/mouse backend. Documentation describes configuration limitations, pairing, and relative mouse support.
-   - Its documented Raspberry Pi configuration is not automatically applicable to arbitrary Linux hosts or external dongles.
-3. PiKVM input API: https://docs.pikvm.org/api/
-4. Microsoft receiver considerations: https://learn.microsoft.com/en-us/windows-hardware/design/device-experiences/wireless-projection-receiver-manufacturers
-5. Miracast over Infrastructure overview: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-mice/ab6341b7-4fc7-41fd-a74d-3fe023455482
+Piracast (Raspberry Pi forum, ~2014) is historical: Pi 2/3 era, phone sources, one
+reported-working dongle (TL-WN725N), HDCP unsupported. Not a recommendation.
 
-Recheck current documentation, issues, package availability, and relevant alternatives. Confirm that alternatives are receivers: many Linux wireless-display projects only SEND a Linux screen to a TV.
+## Wi-Fi hardware facts (Pi 5 onboard radio)
 
-## Phase 1 — identify hardware and protocol
+CYW43455 (Infineon/Cypress), driver `brcmfmac`, same as Pi 4. From searches: P2P exists
+on the chip but is unproven for Miracast sinking; firmware versions in the wild range
+7.45.206-7.45.265; the chip randomizes MACs by default (Wi-Fi Direct persistent groups
+want stable ones); a kernel issue logs unhandled P2P action frames. An unrelated
+brcmfmac report (BCM43602) showed `test-hardware-capabilities.sh` saying "P2P OK" while
+`miracle-wifid` said unsupported, so a passing capability check is not proof.
 
-Inspect available Linux hardware with read-only commands such as `cat /etc/os-release`, `uname -a`, `lsusb`, `lspci -nnk`, `iw dev`, `iw list`, `rfkill list`, `bluetoothctl list`, and `bluetoothctl show`. Run only commands available on the host; install prerequisites as needed within authorized scope.
+## Milestone 1 (only goal until met): receiver reliability
 
-Record Wi-Fi chipset/driver, advertised P2P modes and interface combinations, Bluetooth controller, video decode/encode support, and the interface carrying management traffic. P2P capability reports are necessary evidence, not a guarantee of interoperability.
+Success = the work laptop connects via native Win+K **repeatedly** and video holds for
+15 minutes, on one fixed receiver OS + chipset. Record negotiated resolution/fps, CPU/RAM,
+failures with logs, and at least ten connect/disconnect cycles. A Cast-menu entry is not
+success. Browser forwarding does not start until this is met.
 
-Confirm whether the laptop uses Windows Win+K. If it is macOS/AirPlay or browser casting, revise the receiver choice before proceeding. Identify only genuinely missing hardware details that cannot be inspected locally.
+Suggested order (cheapest first; stop at the first that works reliably):
+1. **Microsoft Wireless Display on the dev laptop**: free baseline. Needs the optional
+   feature present and the dev laptop's adapter to support it; the work laptop must see it.
+2. **LazyCast on the spare Pi 5** (or Pi 4) with the OS version the README recommends,
+   onboard radio for Miracast, USB-serial console for access.
+3. **MiracleCast** on the Pi with `iw list`, `test-hardware-capabilities.sh`,
+   NetworkManager stopped, `--log-level trace`, and `p2p_no_group_iface=1` if group
+   formation fails.
+4. **AirServer** trial on Windows, then OBS capture.
+5. If the onboard radio fails P2P, repeat 2-3 with a USB adapter whose chipset has a
+   documented working P2P report (check before buying; mt76 family is the lead guess).
 
-Deliver: hardware inventory, confirmed protocol, recommended receiver configuration, and any hardware blocker.
+Before step 2-3, run read-only discovery on the Pi: `cat /etc/os-release`, `uname -a`,
+`iw list` (look for P2P-GO / P2P-client and interface combinations), `dmesg | grep
+brcmfmac` (firmware version), `rfkill list`.
 
-## Phase 2 — prove video reception locally
+## Later milestones (after Milestone 1)
 
-Install/build the best supported receiver, beginning with MiracleCast if still appropriate. Record exact version or commit and dependencies. Preserve existing configuration and provide rollback for network changes. Use local console or a separate management interface when changing Wi-Fi ownership.
+2. Receiver output -> browser stream (WebRTC/MediaMTX). Prefer repackaging compressed
+   H.264 without transcoding; measure CPU/latency if transcoding is needed.
+3. BLE HID dongle firmware (Zephyr on nice!nano) + serial/BLE command channel, per
+   `docs/PROTOCOL.md`; mock dongle and tests already exist in `host/`.
+4. Optional UIBC input, only if cheap; BLE HID is the primary input path.
 
-Advertise a distinct receiver name, manually connect from the laptop, and show its desktop locally. Start at 1080p/30 if negotiation allows, lowering resolution if needed. Verify ordinary desktop content, text readability, and changing windows.
+## Constraints and caveats
 
-Run for 15 minutes. Record negotiated resolution/frame rate, CPU/RAM load, hardware versus software decoding, connection failures, and approximate video latency with a stated measurement method. Test at least three disconnect/reconnect cycles. Keep logs focused on this test.
-
-Deliver: repeatable commands, working video evidence, measured resource usage, and observed failures. Do not claim success based only on appearing in the Cast menu.
-
-## Phase 3 — prove keyboard and mouse
-
-Briefly test UIBC with explicit laptop-side input permission where offered. Verify typing, modifiers, pointer movement, clicking, and scrolling. If unreliable, use Bluetooth HID rather than spending excessive time debugging optional UIBC.
-
-For Bluetooth, determine whether the available dongle can support the chosen emulation backend. Distinguish general Bluetooth adapters from proprietary keyboard receivers. Reuse PiKVM’s backend where practical; otherwise choose an existing Linux HID implementation.
-
-Pair manually and test keyboard layout, held keys, modifier release, pointer behavior, reconnects, and input cleanup after a dropped client connection. Never leave keys or buttons held after disconnection. Explain any relative-mouse limitations.
-
-Deliver: a stable input path and reproducible pairing/recovery instructions.
-
-## Phase 4 — remote browser access
-
-Only after video and input work separately, inspect how to reuse the existing PiKVM interface or implement a minimal authenticated browser viewer with input forwarding. Integration into PiKVM is an investigation, not an assumed supported video-source setting.
-
-Prefer forwarding/repackaging the received compressed video when compatible with the browser transport. If transcoding is necessary, use hardware encoding where available and measure added CPU load and latency. Document the actual pipeline and codecs; do not promise zero-copy or zero-transcode operation without verification.
-
-Keep management access on the LAN or existing private VPN, with authentication. Do not expose the prototype publicly by default. Use an explicit input-control session and release held input when it ends.
-
-## Acceptance criteria and limitations
-
-- Laptop connects using its native projection UI without installing a target-side remote desktop agent.
-- No HDMI/USB tether to the laptop; Bluetooth pairing is acceptable.
-- Video remains stable for 15 minutes and reconnects work in three trials.
-- Keyboard/mouse work from the controller, including recovery after a disconnect.
-- Report measured latency and resource usage. Suggested usability target: under 200 ms end-to-end for ordinary desktop work; this is a project target, not a known capability.
-- Document behavior during locking, sleep/wake, reboot, lid closure, and Wi-Fi changes. Treat untested cases explicitly as untested.
-- No expectation of BIOS, bootloader, or early-boot video: projection depends on the target OS and its casting session.
-- Do not assume employer policy allows every projection/input mode; report an actual management restriction if encountered and do not bypass it.
-
-## Final deliverables
-
-Provide a concise go/no-go assessment, architecture that actually worked, setup/start/stop/rollback instructions, dependency versions, minimal reusable scripts or services, measured results, and known limitations. Clearly separate completed tests from proposed improvements.
-
-If Linux reception proves impractical on the available hardware, explain the specific blocker. Evaluate a physical Miracast receiver with HDMI output feeding the existing PiKVM capture input plus Bluetooth HID as a fallback. This would remain wireless at the laptop while retaining short wired connections inside the receiver assembly; verify capture and receiver compatibility before recommending purchases.
+- Untested items must be reported as untested. Do not claim a "most stable" receiver
+  without a benchmark.
+- Behavior on lock, sleep, lid close, reboot, Wi-Fi change is to be recorded. Expected:
+  lock probably survives; sleep/lid/reboot drop the cast.
+- Work laptop policy may block input or projection modes; report it, don't bypass it.
+- Shared office Wi-Fi often has client isolation; a travel router or hotspot may be
+  needed for the LAN side (unverified for the user's site).
+- Don't manually run containers/changes that disrupt the user's other machines; this
+  project's hardware is the spare Pi and this laptop.
+- Prior assistant turns were too optimistic and drifted to HDMI; keep to the software-only
+  design.
